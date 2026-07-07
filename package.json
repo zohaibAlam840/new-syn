@@ -1,0 +1,27 @@
+{
+  "name": "demucs-service",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "astro dev",
+    "start": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "devDependencies": {
+    "@astrojs/svelte": "^0.1.2",
+    "@astrojs/tailwind": "^0.2.1",
+    "astro": "^1.0.0-beta.20",
+    "prettier": "^2.6.2",
+    "prettier-plugin-astro": "^0.0.12",
+    "prettier-plugin-svelte": "^2.7.0",
+    "svelte": "^3.48.0"
+  },
+  "dependencies": {
+    "@tailwindcss/typography": "^0.5.2",
+    "firebase": "^9.8.0",
+    "firebase-tools": "^10.8.0",
+    "firebaseui": "^6.0.1",
+    "postcss-import": "^14.1.0"
+  }
+}

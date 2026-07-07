@@ -1,0 +1,15 @@
+# Keep the Docker build context small — exclude the local venv, downloaded model
+# weights, served audio, and the (unrelated) Astro docs site.
+**/__pycache__
+**/*.pyc
+model/.venv
+model/data
+model/models
+node_modules
+docs
+public
+src
+dist
+*.log
+.git
+.gitignore

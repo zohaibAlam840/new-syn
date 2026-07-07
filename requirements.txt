@@ -1,0 +1,15 @@
+# NOTE: torch + torchaudio are installed separately in the Dockerfile from the
+# CPU-only wheel index (smaller image, no CUDA). Do not add them here.
+
+# Web server
+fastapi==0.139.0
+uvicorn==0.50.2
+python-multipart==0.0.32
+
+# Vocal separation
+demucs==4.0.1
+numpy==2.5.1
+lameenc==1.8.4
+
+# Full-song fetch (YouTube)
+yt-dlp==2026.7.4

@@ -1,0 +1,21 @@
+# Render Blueprint — deploy the Demucs karaoke backend as a Docker web service.
+# In Render: New → Blueprint → connect the repo containing this file.
+#
+# IMPORTANT: Demucs loads a neural model and separates full songs on CPU. It needs
+# ~2 GB RAM — the free/starter (512 MB) plans WILL crash (OOM). Use `standard` or
+# higher. Separation is CPU-heavy (~2-6 min per song); the API is non-blocking
+# (returns a key immediately, the app polls /status), so there are no long HTTP
+# requests to time out.
+services:
+  - type: web
+    name: demucs-karaoke
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: standard          # 2 GB RAM. Do NOT use free/starter — Demucs will OOM.
+    region: oregon          # pick the region closest to you
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: demucs_model
+        value: htdemucs

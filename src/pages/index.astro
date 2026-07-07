@@ -1,0 +1,40 @@
+---
+import BaseHead from "../components/global/BaseHead.astro";
+import SiteFooter from "../components/global/SiteFooter.astro";
+import UploadFile from "../components/UploadFile.svelte";
+---
+
+<html lang="en">
+    <head>
+        <BaseHead />
+    </head>
+
+    <body class="w-full h-full bg-blue">
+        <div class="flex flex-col h-screen justify-between">
+            <header
+                class="container mx-auto max-w-screen-sm p-10 m-10 mb-0 pb-3"
+            >
+                <h1 class="text-white text-center text-8xl">
+                    <a href="/">DEMUCS</a>
+                </h1>
+                <h2 class="font-light text-3xl">Music Source Separation</h2>
+                <h3 class="font-light text-lg">Runs on GCP</h3>
+            </header>
+
+            <main
+                class="container max-w-4xl mx-auto mb-auto text-white text-center"
+            >
+                <UploadFile client:idle />
+                <p class="text-sm">
+                    Sample: <a
+                        class="underline"
+                        href="/sample/mixture-3s.mp3"
+                        download>mixture-3s.mp3</a
+                    >
+                </p>
+            </main>
+
+            <SiteFooter />
+        </div>
+    </body>
+</html>

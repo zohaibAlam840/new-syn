@@ -1,0 +1,37 @@
+steps:
+  # ----------------------------------------------------------------------------
+  # Build website
+
+  - name: node
+    entrypoint: npm
+    args: ["install"]
+
+  - name: node
+    entrypoint: npm
+    args: ["run", "build"]
+    env:
+      - "PUBLIC_VERSION=${SHORT_SHA}"
+    secretEnv: ["PUBLIC_FIREBASE_API_KEY"]
+
+  # ----------------------------------------------------------------------------
+  # Build docs
+
+  - name: python
+    dir: docs
+    entrypoint: pip
+    args: ["install", "-r", "requirements.txt", "--user"]
+
+  - name: python
+    dir: docs
+    entrypoint: python
+    args: ["-m", "mkdocs", "build"]
+
+  # ----------------------------------------------------------------------------
+  # Deploy to Firebase
+
+  - name: us-central1-docker.pkg.dev/demucs-service/firebase/firebase
+    args: ["deploy", "--project=demucs-service", "--only=hosting"]
+availableSecrets:
+  secretManager:
+    - versionName: projects/demucs-service/secrets/FIREBASE_API_KEY/versions/1
+      env: "PUBLIC_FIREBASE_API_KEY"
