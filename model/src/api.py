@@ -20,6 +20,14 @@ os.environ["PATH"] = os.path.dirname(sys.executable) + os.pathsep + os.environ.g
 _ffmpeg = shutil.which("ffmpeg")
 FFMPEG_DIR = os.path.dirname(_ffmpeg) if _ffmpeg else None
 
+# YouTube bot-check bypass for cloud/datacenter IPs (Render blocks otherwise).
+# - YT_COOKIES_FILE: path to a Netscape cookies.txt exported from a logged-in
+#   YouTube session. On Render, add it as a Secret File named `cookies.txt`
+#   (mounted at /etc/secrets/cookies.txt, the default below).
+# - YTDLP_PROXY: optional http/https/socks proxy URL (e.g. a residential proxy).
+YT_COOKIES_FILE = os.environ.get("YT_COOKIES_FILE", "/etc/secrets/cookies.txt")
+YTDLP_PROXY = os.environ.get("YTDLP_PROXY", "")
+
 import torch as th
 import yt_dlp
 from fastapi import FastAPI, File, Request, UploadFile
@@ -176,6 +184,12 @@ def _download_audio(query):
     }
     if FFMPEG_DIR:
         opts["ffmpeg_location"] = FFMPEG_DIR
+    if YT_COOKIES_FILE and os.path.exists(YT_COOKIES_FILE):
+        opts["cookiefile"] = YT_COOKIES_FILE
+        logger.info("yt-dlp using cookies: %s", YT_COOKIES_FILE)
+    if YTDLP_PROXY:
+        opts["proxy"] = YTDLP_PROXY
+        logger.info("yt-dlp using proxy")
     with yt_dlp.YoutubeDL(opts) as ydl:
         ydl.download([query])
     files = glob.glob(os.path.join(tmpdir, "src.*"))

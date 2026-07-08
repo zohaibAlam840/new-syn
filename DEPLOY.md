@@ -84,6 +84,39 @@ Rebuild/reload the app and the Karaoke tab now gets full-length instrumentals.
 | `GET /status/{key}` | — | `{"ready":true,"file":"/files/<key>.mp3"}` when done. |
 | `GET /files/<key>.mp3` | — | the instrumental (StaticFiles). |
 
+## ⚠️ YouTube blocks datacenter IPs — cookies required on Render
+
+`/separate_search` downloads from YouTube. From a home connection this just works,
+but **from Render's datacenter IP YouTube returns "Sign in to confirm you're not a
+bot"** and the download fails. To fix it, give yt-dlp cookies from a logged-in
+YouTube session. (Without cookies, `/separate_search` fails and the app falls back
+to the 30s iTunes preview; `/separate_upload` — the "Import a song" button — always
+works because it never touches YouTube.)
+
+### Set up cookies (free)
+1. In a browser **logged into YouTube**, install a cookies exporter extension —
+   e.g. **"Get cookies.txt LOCALLY"** (Chrome/Firefox). Open `youtube.com`, click
+   the extension, **Export** → you get a `cookies.txt` (Netscape format).
+   - Tip: do this in a Chrome **Incognito** window logged into a throwaway Google
+     account, then close it *without logging out*, so the cookie session isn't
+     rotated/invalidated. Use a burner account — not your main one.
+2. In the Render dashboard for the service → **Environment → Secret Files → Add
+   Secret File**:
+   - **Filename:** `cookies.txt`
+   - **Contents:** paste the exported file
+   Render mounts it at `/etc/secrets/cookies.txt` — which is the default the code
+   already looks for (`YT_COOKIES_FILE`). No env var needed.
+3. **Save** → Render redeploys. Done. On the next `/separate_search` the logs show
+   `yt-dlp using cookies: /etc/secrets/cookies.txt` and the full download succeeds.
+
+**Cookies expire** (YouTube rotates them every few weeks) — when `/separate_search`
+starts failing again with the bot message, re-export and replace the Secret File.
+
+### Alternative: residential proxy (no expiry)
+Set env var **`YTDLP_PROXY`** to a proxy URL (e.g. `http://user:pass@host:port` from
+a residential proxy provider). yt-dlp routes through it so YouTube sees a home IP.
+More reliable than cookies, but costs money.
+
 ## Notes / gotchas
 
 - **yt-dlp + JS runtime:** yt-dlp prints a *"no supported JavaScript runtime"*
