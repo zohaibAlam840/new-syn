@@ -86,12 +86,15 @@ Rebuild/reload the app and the Karaoke tab now gets full-length instrumentals.
 
 ## ⚠️ YouTube blocks datacenter IPs — cookies required on Render
 
-`/separate_search` downloads from YouTube. From a home connection this just works,
-but **from Render's datacenter IP YouTube returns "Sign in to confirm you're not a
-bot"** and the download fails. To fix it, give yt-dlp cookies from a logged-in
-YouTube session. (Without cookies, `/separate_search` fails and the app falls back
-to the 30s iTunes preview; `/separate_upload` — the "Import a song" button — always
-works because it never touches YouTube.)
+`/separate_search` fetches the **full song** (never a 30s clip): it tries YouTube
+first, then SoundCloud, and rejects anything under 75s (a preview/snippet). If no
+full track is found, it errors — the app shows an error rather than a short clip.
+
+The catch: from a home connection YouTube just works, but **from Render's datacenter
+IP YouTube returns "Sign in to confirm you're not a bot"** and fails. SoundCloud
+usually only has 30s previews of mainstream songs (rejected by the 75s guard), so on
+Render **cookies are effectively required** for auto-search to return full mainstream
+songs. Give yt-dlp cookies from a logged-in YouTube session:
 
 ### Set up cookies (free)
 1. In a browser **logged into YouTube**, install a cookies exporter extension —

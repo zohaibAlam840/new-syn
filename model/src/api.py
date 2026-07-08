@@ -165,38 +165,67 @@ async def separate_upload(file: UploadFile = File(...)):
 
 
 # ── Full-song fetch via yt-dlp ───────────────────────────────────────────────
-# Given a "<track> <artist>" query, search YouTube and download the full-length
-# audio as an mp3. This lifts the 30s iTunes-preview cap so the karaoke tune is
-# the whole song. ffmpeg (bundled in the venv's Scripts dir) does the extraction.
+# Given a "<track> <artist>" query, search for and download the FULL-length audio
+# as an mp3 (no 30s preview). Sources are tried in order until one delivers:
+#   1. YouTube  — best catalog, but blocks Render's datacenter IP unless cookies
+#                 (YT_COOKIES_FILE) or a proxy (YTDLP_PROXY) are configured.
+#   2. SoundCloud — no cookies needed; a fallback that often works from the cloud.
+# ffmpeg does the mp3 extraction.
+SEARCH_SOURCES = ["ytsearch1", "scsearch1"]
+
+# Minimum length (seconds) to accept as a "full song" — rejects 30s previews.
+MIN_FULL_SEC = 75
+
+
 def _download_audio(query):
-    tmpdir = mkdtemp()
-    out_tmpl = os.path.join(tmpdir, "src.%(ext)s")
-    opts = {
+    base = {
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        "default_search": "ytsearch1",
         "format": "bestaudio/best",
-        "outtmpl": out_tmpl,
         "postprocessors": [
             {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"},
         ],
     }
     if FFMPEG_DIR:
-        opts["ffmpeg_location"] = FFMPEG_DIR
+        base["ffmpeg_location"] = FFMPEG_DIR
     if YT_COOKIES_FILE and os.path.exists(YT_COOKIES_FILE):
-        opts["cookiefile"] = YT_COOKIES_FILE
+        base["cookiefile"] = YT_COOKIES_FILE
         logger.info("yt-dlp using cookies: %s", YT_COOKIES_FILE)
     if YTDLP_PROXY:
-        opts["proxy"] = YTDLP_PROXY
+        base["proxy"] = YTDLP_PROXY
         logger.info("yt-dlp using proxy")
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        ydl.download([query])
-    files = glob.glob(os.path.join(tmpdir, "src.*"))
-    if not files:
-        return None
-    mp3s = [f for f in files if f.lower().endswith(".mp3")]
-    return mp3s[0] if mp3s else files[0]
+
+    last_err = None
+    for source in SEARCH_SOURCES:
+        tmpdir = mkdtemp()
+        opts = dict(base, outtmpl=os.path.join(tmpdir, "src.%(ext)s"))
+        try:
+            logger.info("trying source %s for: %s", source, query)
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                # Check duration BEFORE downloading — reject 30s previews/snippets
+                # (SoundCloud gates full mainstream tracks) so we never serve a clip.
+                info = ydl.extract_info(f"{source}:{query}", download=False)
+                entry = info["entries"][0] if info.get("entries") else info
+                dur = entry.get("duration")
+                if dur is not None and dur < MIN_FULL_SEC:
+                    logger.warning("source %s only had a %ss snippet — skipping", source, int(dur))
+                    continue
+                target = entry.get("webpage_url") or entry.get("original_url") or entry.get("url")
+                ydl.download([target])
+            mp3s = glob.glob(os.path.join(tmpdir, "src.mp3"))
+            if mp3s:
+                logger.info("got full track from %s (%ss)", source, int(dur) if dur else "?")
+                return mp3s[0]
+            others = glob.glob(os.path.join(tmpdir, "src.*"))
+            if others:
+                return others[0]
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            logger.warning("source %s failed: %s", source, str(e).splitlines()[-1] if str(e) else e)
+    if last_err:
+        raise last_err
+    return None
 
 
 def _process_search(key, query, out):
