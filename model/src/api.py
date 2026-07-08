@@ -6,6 +6,7 @@ import os
 import shutil
 import sys
 import threading
+import time
 import urllib.request
 from pathlib import Path
 from tempfile import NamedTemporaryFile, mkdtemp
@@ -55,26 +56,69 @@ app.add_middleware(
 app.mount("/files", StaticFiles(directory=str(served_dir)), name="files")
 
 # Background job tracking so requests return instantly (separation is slow on CPU).
-_jobs = {}  # key -> "processing" | "done" | "error:<msg>"
+# Each job is a dict: {stage: queued|downloading|separating|done|error,
+#                      started: <ts when separating began>, est: <est secs>, error: <msg>}
+_jobs = {}
 _lock = threading.Lock()
+
+
+def _set_job(key, **kw):
+    with _lock:
+        j = _jobs.get(key)
+        if not isinstance(j, dict):
+            j = {}
+        j.update(kw)
+        _jobs[key] = j
+
+
+def _claim_job(key):
+    """Mark a job as queued and return True if the caller should start it (i.e. it
+    isn't already running). A previously-errored job can be retried."""
+    with _lock:
+        j = _jobs.get(key)
+        if j is None or (isinstance(j, dict) and j.get("stage") == "error"):
+            _jobs[key] = {"stage": "queued"}
+            return True
+        return False
+
+
+def _progress(key):
+    """(stage, percent) for /status. Percent during separation is estimated from
+    elapsed time vs the expected duration, so the bar moves smoothly."""
+    with _lock:
+        j = _jobs.get(key)
+    if not isinstance(j, dict):
+        return "queued", 0
+    stage = j.get("stage", "queued")
+    if stage == "downloading":
+        return "downloading", 8
+    if stage == "separating":
+        est = j.get("est") or 180
+        frac = (time.time() - j.get("started", time.time())) / est
+        return "separating", int(15 + max(0.0, min(0.95, frac)) * 80)  # 15 → 95
+    if stage == "done":
+        return "done", 100
+    if stage == "error":
+        return "error", 0
+    return "queued", 3
 
 
 def _process(key, audio_url, out):
     try:
+        _set_job(key, stage="downloading")
         with NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
             req = urllib.request.Request(audio_url, headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=30) as resp:
                 tmp.write(resp.read())
             in_path = tmp.name
         logger.info("separating %s", key)
+        _set_job(key, stage="separating", started=time.time(), est=60)
         model.separate_instrumental(in_path, out)
-        with _lock:
-            _jobs[key] = "done"
+        _set_job(key, stage="done")
         logger.info("done %s", key)
     except Exception as e:  # noqa: BLE001
         logger.exception("job %s failed", key)
-        with _lock:
-            _jobs[key] = f"error:{e}"
+        _set_job(key, stage="error", error=str(e))
 
 
 @app.get("/", status_code=200, response_class=HTMLResponse)
@@ -101,42 +145,37 @@ async def karaoke(request: Request):
     if out.exists():
         return {"file": file_url, "ready": True, "cached": True}
 
-    with _lock:
-        status = _jobs.get(key)
-        if status is None or status.startswith("error:"):
-            _jobs[key] = "processing"
-            threading.Thread(target=_process, args=(key, audio_url, out), daemon=True).start()
-            status = "processing"
+    if _claim_job(key):
+        threading.Thread(target=_process, args=(key, audio_url, out), daemon=True).start()
 
-    if status.startswith("error:"):
-        return {"ready": False, "error": status[6:]}
-    return {"file": file_url, "ready": False}
+    return {"file": file_url, "ready": False, "stage": "queued", "percent": 0}
 
 
 def _process_file(key, in_path, out):
     try:
         logger.info("separating (upload) %s", key)
+        _set_job(key, stage="separating", started=time.time(), est=180)
         model.separate_instrumental(in_path, out)
-        with _lock:
-            _jobs[key] = "done"
+        _set_job(key, stage="done")
         logger.info("done %s", key)
     except Exception as e:  # noqa: BLE001
         logger.exception("job %s failed", key)
-        with _lock:
-            _jobs[key] = f"error:{e}"
+        _set_job(key, stage="error", error=str(e))
 
 
 @app.get("/status/{key}", status_code=200)
 def status(key: str):
-    """Poll separation progress for an uploaded file."""
+    """Poll separation progress. Returns {ready, stage, percent} (+ file when ready,
+    + error on failure). stage: queued|downloading|separating|done|error."""
     out = served_dir / f"{key}.mp3"
     if out.exists():
-        return {"ready": True, "file": f"/files/{key}.mp3"}
-    with _lock:
-        st = _jobs.get(key, "unknown")
-    if st.startswith("error:"):
-        return {"ready": False, "error": st[6:]}
-    return {"ready": False}
+        return {"ready": True, "file": f"/files/{key}.mp3", "stage": "done", "percent": 100}
+    stage, percent = _progress(key)
+    if stage == "error":
+        with _lock:
+            err = (_jobs.get(key) or {}).get("error", "unknown")
+        return {"ready": False, "stage": "error", "percent": 0, "error": err}
+    return {"ready": False, "stage": stage, "percent": percent}
 
 
 @app.post("/separate_upload", status_code=200)
@@ -155,13 +194,10 @@ async def separate_upload(file: UploadFile = File(...)):
         tmp.write(data)
         in_path = tmp.name
 
-    with _lock:
-        st = _jobs.get(key)
-        if st is None or st.startswith("error:"):
-            _jobs[key] = "processing"
-            threading.Thread(target=_process_file, args=(key, in_path, out), daemon=True).start()
+    if _claim_job(key):
+        threading.Thread(target=_process_file, args=(key, in_path, out), daemon=True).start()
 
-    return {"key": key, "file": file_url, "ready": False}
+    return {"key": key, "file": file_url, "ready": False, "stage": "queued", "percent": 0}
 
 
 # ── Full-song fetch via yt-dlp ───────────────────────────────────────────────
@@ -216,33 +252,33 @@ def _download_audio(query):
             mp3s = glob.glob(os.path.join(tmpdir, "src.mp3"))
             if mp3s:
                 logger.info("got full track from %s (%ss)", source, int(dur) if dur else "?")
-                return mp3s[0]
+                return mp3s[0], dur
             others = glob.glob(os.path.join(tmpdir, "src.*"))
             if others:
-                return others[0]
+                return others[0], dur
         except Exception as e:  # noqa: BLE001
             last_err = e
             logger.warning("source %s failed: %s", source, str(e).splitlines()[-1] if str(e) else e)
     if last_err:
         raise last_err
-    return None
+    return None, None
 
 
 def _process_search(key, query, out):
     try:
+        _set_job(key, stage="downloading")
         logger.info("downloading (yt-dlp) %s: %s", key, query)
-        in_path = _download_audio(query)
+        in_path, dur = _download_audio(query)
         if not in_path:
             raise RuntimeError("no audio found for query")
         logger.info("separating (search) %s", key)
+        _set_job(key, stage="separating", started=time.time(), est=max(30, (dur or 180) * 1.8))
         model.separate_instrumental(in_path, out)
-        with _lock:
-            _jobs[key] = "done"
+        _set_job(key, stage="done")
         logger.info("done %s", key)
     except Exception as e:  # noqa: BLE001
         logger.exception("job %s failed", key)
-        with _lock:
-            _jobs[key] = f"error:{e}"
+        _set_job(key, stage="error", error=str(e))
 
 
 @app.post("/separate_search", status_code=200)
@@ -263,13 +299,10 @@ async def separate_search(request: Request):
     if out.exists():
         return {"key": key, "file": file_url, "ready": True, "cached": True}
 
-    with _lock:
-        st = _jobs.get(key)
-        if st is None or st.startswith("error:"):
-            _jobs[key] = "processing"
-            threading.Thread(target=_process_search, args=(key, query, out), daemon=True).start()
+    if _claim_job(key):
+        threading.Thread(target=_process_search, args=(key, query, out), daemon=True).start()
 
-    return {"key": key, "file": file_url, "ready": False}
+    return {"key": key, "file": file_url, "ready": False, "stage": "queued", "percent": 0}
 
 
 @app.post("/predict", status_code=200)

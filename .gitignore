@@ -25,3 +25,8 @@ firebase-debug.log
 
 # Python
 .venv
+
+# Runtime artifacts (downloaded model weights + separated/served audio cache)
+model/data/
+model/models/
+__pycache__/
